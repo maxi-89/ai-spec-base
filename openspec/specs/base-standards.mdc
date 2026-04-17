@@ -14,20 +14,19 @@ alwaysApply: true
 - **Pattern Detection**: Detect and highlight repeated code patterns.
 
 ## 2. Language Standards
-- **English Only**: All technical artifacts must always use English, including:
-    - Code (variables, functions, classes, comments, error messages, log messages)
-    - Documentation (README, guides, API docs)
-    - Jira tickets (titles, descriptions, comments)
-    - Data schemas and database names
-    - Configuration files and scripts
-    - Git commit messages
-    - Test names and descriptions
 
-## 3. Specific standards
+- **English Only**: All technical artifacts must always use English, including:
+  - Code (variables, functions, classes, comments, error messages, log messages)
+  - Documentation (README, guides, API docs)
+  - Data schemas and database names
+  - Configuration files and scripts
+  - Git commit messages
+  - Test names and descriptions
+
+## 3. Specific Standards
 
 For detailed standards and guidelines specific to different areas of the project, refer to:
 
-- [Backend Standards](./backend-standards.mdc) - Serverless Framework, Lambda, DynamoDB, DDD architecture, testing and backend best practices
-- [Frontend Standards](./frontend-standards.mdc) - Next.js App Router, Tailwind CSS, TypeScript, component architecture and frontend best practices
-- [Documentation Standards](./documentation-standards.mdc) - Technical documentation structure, formatting, and maintenance guidelines, including AI standards like this document
-
+- [Backend Standards](./backend-standards.mdc) — NestJS v10+, Node.js 24, tsc, DynamoDB, DDD architecture, testing and backend best practices
+- [Frontend Standards](./frontend-standards.mdc) — Next.js App Router, Tailwind CSS, TypeScript, component architecture and frontend best practices
+- [Documentation Standards](./documentation-standards.mdc) — Technical documentation structure, formatting, and maintenance guidelines

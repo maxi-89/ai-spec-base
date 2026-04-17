@@ -1,6 +1,6 @@
 # Role
 
-You are an expert software architect with deep experience in serverless TypeScript applications on AWS, applying Domain-Driven Design (DDD) with layered architecture (Domain, Application, Infrastructure, Presentation).
+You are an expert software architect with deep experience in NestJS v10+ applications on Node.js 24, applying Domain-Driven Design (DDD) with modular architecture (Domain, Application, Infrastructure, Presentation).
 
 # Arguments
 
@@ -17,7 +17,7 @@ Produce a step-by-step backend implementation plan for a ticket that is detailed
 3. Propose a step-by-step plan for the backend, applying the standards in `openspec/specs`
 4. Ensure the plan is complete enough that the developer needs no further clarification
 5. Do not write implementation code — provide the plan only
-6. If asked to start implementing, first move to the feature branch (Step 0) and follow `/develop-backend.md`
+6. If asked to start implementing, first move to the feature branch (Step 0) and follow `/develop-backend`
 
 # Output format
 
@@ -39,7 +39,8 @@ Use the following template:
 
 ### 3. Architecture Context
 - Files to create and files to modify
-- Repository interfaces needed
+- Repository interfaces and injection tokens needed
+- NestJS module wiring required
 - Dependencies between components
 
 ### 4. Implementation Steps
@@ -55,44 +56,56 @@ Use the following template:
 
 #### Step 1: Domain Layer
 - **File**: `src/domain/models/[Entity].ts`
-- **Action**: Define the entity class or interface
-- **Notes**: Zero dependencies on AWS or DynamoDB
+- **Action**: Define the entity class with invariants enforced in the constructor
+- **Notes**: Zero NestJS or AWS imports
 
 #### Step 2: Repository Interface
 - **File**: `src/domain/repositories/I[Entity]Repository.ts`
-- **Action**: Define the repository contract methods needed by the service
+- **Action**: Define the repository contract methods + co-located `Symbol` injection token
+- **Notes**: `export const ENTITY_REPOSITORY = Symbol('IEntityRepository')`
 
-#### Step 3: Input Validator
-- **File**: `src/application/validators/[entity]Validator.ts`
-- **Action**: Validate `unknown` input, return typed object or throw `ValidationError`
+#### Step 3: Request and Response DTOs
+- **Files**: `src/modules/[feature]/dto/create-[entity].dto.ts`, `[entity]-response.dto.ts`
+- **Action**: Define DTOs as classes with `class-validator` decorators
+- **Notes**: Separate request DTOs from response DTOs; never expose domain entities
 
 #### Step 4: Application Service
-- **File**: `src/application/services/[entity]Service.ts`
-- **Action**: Orchestrate domain logic — validate input, build entity, call repository
-- **Notes**: Must not import AWS SDK or DynamoDB directly
+- **File**: `src/modules/[feature]/[feature].service.ts`
+- **Action**: Orchestrate domain logic — inject repository via token, build entity, call repository, return response DTO
+- **Notes**: Use NestJS HTTP exceptions (`NotFoundException`, `BadRequestException`) — never raw `Error`
 
 #### Step 5: DynamoDB Repository
-- **File**: `src/infrastructure/dynamodb/[Entity]Repository.ts`
+- **File**: `src/infrastructure/dynamodb/[entity].repository.ts`
 - **Action**: Implement the repository interface using AWS SDK v3 + DynamoDBDocumentClient
 - **Key design**: Specify PK/SK pattern (e.g. `ENTITY#<id>`)
+- **Notes**: Read config via `ConfigService.getOrThrow()`
 
-#### Step 6: Lambda Handler
-- **File**: `src/presentation/handlers/[action][Entity].ts`
-- **Action**: Parse `event.body`, call the service, return `APIGatewayProxyResult`
-- **Notes**: No business logic — only HTTP parsing and error-to-status-code mapping
+#### Step 6: Controller
+- **File**: `src/modules/[feature]/[feature].controller.ts`
+- **Action**: Declare routes with NestJS decorators, use built-in pipes for coercion, delegate to service
+- **Notes**: No business logic — only HTTP plumbing and typed response DTOs
 
-#### Step 7: Register in serverless.yml
-- **Action**: Add the function definition with its HTTP event, path, method, and CORS
+#### Step 7: NestJS Module
+- **File**: `src/modules/[feature]/[feature].module.ts`
+- **Action**: Wire controller, service, and repository binding (`{ provide: ENTITY_REPOSITORY, useClass: EntityRepository }`)
 
-#### Step 8: Unit Tests
-- **Files**: `__tests__/unit/[layer]/[file].test.ts`
+#### Step 8: Register in AppModule
+- **File**: `src/app.module.ts`
+- **Action**: Import the new feature module
+
+#### Step 9: Unit Tests
+- **Files**: `test/unit/modules/[feature]/[feature].service.spec.ts`, `[feature].controller.spec.ts`
 - **Coverage required**: 90% branches, functions, lines, statements
+- **Pattern**: Use `@nestjs/testing`, mock repositories with `jest.fn()`, follow AAA, `jest.clearAllMocks()` in `beforeEach`
 - **Cases to cover**:
   - Successful path
-  - Validation errors (missing/invalid fields)
-  - Not found (if applicable)
-  - DynamoDB/infrastructure errors
-  - Edge cases specific to the business rule
+  - Not found errors (if applicable)
+  - Validation errors from domain
+  - Infrastructure errors
+
+#### Step 10: E2E Tests
+- **File**: `test/e2e/[feature].e2e-spec.ts`
+- **Action**: Test full HTTP request/response cycle using `supertest` against the NestJS app
 
 #### Step N: Update Documentation
 - **Action**: Review all changes and update affected docs
@@ -109,7 +122,7 @@ Numbered list from Step 0 (branch) to documentation update (always last)
 
 ### 6. Error Response Format
 - JSON shape: `{ "error": "message" }`
-- HTTP status code mapping for this feature
+- HTTP status code mapping for this feature (NestJS exception → status code)
 
 ### 7. Testing Checklist
 - [ ] All happy-path cases covered
@@ -117,6 +130,7 @@ Numbered list from Step 0 (branch) to documentation update (always last)
 - [ ] Infrastructure errors handled
 - [ ] Coverage threshold met (90%)
 - [ ] Tests follow AAA pattern
+- [ ] `jest.clearAllMocks()` in `beforeEach`
 
 ### 8. Dependencies
 - New npm packages required (if any) with justification
@@ -127,9 +141,12 @@ Numbered list from Step 0 (branch) to documentation update (always last)
 - Anything the developer must know before starting
 
 ### 10. Implementation Verification
-- [ ] Code follows DDD layered architecture
-- [ ] No business logic in Lambda handlers
-- [ ] No AWS SDK imports in application or domain layers
+- [ ] Code follows NestJS DDD modular architecture
+- [ ] No business logic in controllers
+- [ ] Services throw NestJS HTTP exceptions, not raw `Error`
+- [ ] Domain layer has zero NestJS or AWS imports
+- [ ] DTOs are classes with `class-validator` decorators
+- [ ] Repository interfaces use `Symbol` injection tokens
 - [ ] TypeScript strict — no `any`
 - [ ] All tests pass
 - [ ] Documentation updated

@@ -1,27 +1,29 @@
 ---
-description: Backend development standards, best practices, and conventions for serverless TypeScript applications on AWS using Serverless Framework, Lambda, API Gateway, and DynamoDB with Domain-Driven Design and clean architecture.
-globs: ["src/**/*.ts", "serverless.yml", "jest.config.ts", "tsconfig.json", "package.json"]
+description: Backend development standards, best practices, and conventions for NestJS TypeScript applications on Node.js 24 with tsc, DynamoDB, and Domain-Driven Design.
+globs: ["src/**/*.ts", "test/**/*.ts", "jest.config.ts", "tsconfig.json", "package.json", "nest-cli.json"]
 alwaysApply: true
 ---
 
-# Backend Standards — Serverless Framework · TypeScript · AWS
+# Backend Standards — NestJS · TypeScript · Node.js 24
 
 ## Table of Contents
 
 - [Technology Stack](#technology-stack)
 - [Architecture Overview](#architecture-overview)
 - [Project Structure](#project-structure)
-- [Domain-Driven Design](#domain-driven-design)
-- [Lambda Handlers (Presentation Layer)](#lambda-handlers-presentation-layer)
-- [Application Layer](#application-layer)
+- [NestJS Module Organization](#nestjs-module-organization)
+- [Application Bootstrap](#application-bootstrap)
+- [Controllers](#controllers)
+- [Services (Application Layer)](#services-application-layer)
 - [Domain Layer](#domain-layer)
+- [DTOs and Validation](#dtos-and-validation)
+- [Exception Handling](#exception-handling)
+- [Configuration](#configuration)
 - [Infrastructure Layer](#infrastructure-layer)
 - [DynamoDB Patterns](#dynamodb-patterns)
-- [Error Handling](#error-handling)
-- [Validation](#validation)
 - [Testing Standards](#testing-standards)
-- [Serverless Framework Configuration](#serverless-framework-configuration)
 - [TypeScript Standards](#typescript-standards)
+- [Build Configuration](#build-configuration)
 - [Git Workflow](#git-workflow)
 
 ---
@@ -30,33 +32,35 @@ alwaysApply: true
 
 | Concern | Technology |
 |---|---|
-| Runtime | Node.js 20.x |
+| Runtime | Node.js 24.x |
 | Language | TypeScript (strict mode) |
-| Framework | Serverless Framework v3 |
-| Compute | AWS Lambda |
-| API | AWS API Gateway (REST) |
+| Framework | NestJS v10+ |
+| Build | tsc (via `nest build`) |
+| HTTP Adapter | Express |
 | Database | AWS DynamoDB |
-| Testing | Jest + ts-jest |
+| Validation | class-validator + class-transformer |
+| Testing | Jest + @nestjs/testing |
 | Linting | ESLint + Prettier |
 
 ---
 
 ## Architecture Overview
 
-The backend follows a **layered DDD architecture** adapted for AWS Lambda:
+The backend follows a **modular DDD architecture** with NestJS:
 
 ```
 src/
-├── domain/           # Business logic, entities, value objects, repository interfaces
-├── application/      # Use cases, services, validators — orchestrates domain
+├── modules/          # Feature modules (controller, service, DTOs per feature)
+├── domain/           # Domain entities, value objects, repository interfaces
 ├── infrastructure/   # DynamoDB repositories, external adapters, AWS SDK clients
-└── presentation/     # Lambda handlers — thin entry points, delegate to application layer
+├── common/           # Shared filters, guards, interceptors, pipes, decorators
+└── config/           # Configuration module and typed config schema
 ```
 
-**Dependency rule**: outer layers depend on inner layers. Domain has zero dependencies on infrastructure or AWS SDK.
+**Dependency rule**: outer layers depend on inner layers. Domain has zero dependencies on infrastructure or NestJS.
 
 ```
-presentation → application → domain ← infrastructure
+controllers → services → domain ← repositories
 ```
 
 ---
@@ -66,20 +70,39 @@ presentation → application → domain ← infrastructure
 ```
 project-name/
 ├── src/
+│   ├── modules/
+│   │   └── foo/
+│   │       ├── dto/
+│   │       │   ├── create-foo.dto.ts
+│   │       │   └── foo-response.dto.ts
+│   │       ├── foo.controller.ts
+│   │       ├── foo.controller.spec.ts
+│   │       ├── foo.service.ts
+│   │       ├── foo.service.spec.ts
+│   │       └── foo.module.ts
 │   ├── domain/
-│   │   ├── models/              # Domain entities and value objects
-│   │   └── repositories/        # Repository interfaces (IFooRepository.ts)
-│   ├── application/
-│   │   ├── services/            # Application services (fooService.ts)
-│   │   └── validators/          # Input validators (fooValidator.ts)
+│   │   ├── models/              # Foo.ts (entity / value object)
+│   │   └── repositories/        # IFooRepository.ts (interface + injection token)
 │   ├── infrastructure/
-│   │   ├── dynamodb/            # DynamoDB client + repository implementations
-│   │   └── errors/              # AppError, ValidationError
-│   └── presentation/
-│       └── handlers/            # Lambda handler functions (createFoo.ts)
-├── __tests__/                   # Unit and integration tests (mirrors src/)
-├── serverless.yml
+│   │   └── dynamodb/
+│   │       ├── dynamodb.provider.ts
+│   │       └── foo.repository.ts
+│   ├── common/
+│   │   ├── filters/             # http-exception.filter.ts
+│   │   ├── guards/              # auth.guard.ts
+│   │   └── interceptors/        # logging.interceptor.ts
+│   ├── config/
+│   │   └── configuration.ts
+│   ├── app.module.ts
+│   └── main.ts
+├── test/
+│   ├── unit/
+│   │   └── modules/foo/
+│   └── e2e/
+│       └── foo.e2e-spec.ts
+├── nest-cli.json
 ├── tsconfig.json
+├── tsconfig.build.json
 ├── jest.config.ts
 ├── .env.example
 └── package.json
@@ -87,24 +110,189 @@ project-name/
 
 ---
 
-## Domain-Driven Design
+## NestJS Module Organization
 
-### Entities
-
-Domain entities are plain TypeScript classes or interfaces. They must be **framework-agnostic** — no AWS SDK, no DynamoDB, no HTTP.
+Each feature is encapsulated in a **NestJS module**. Modules are the primary unit of organization.
 
 ```typescript
-// src/domain/models/Foo.ts
-export interface Foo {
-  id: string;
-  name: string;
-  createdAt: string;
+// src/modules/foo/foo.module.ts
+import { Module } from '@nestjs/common';
+import { FooController } from './foo.controller';
+import { FooService } from './foo.service';
+import { FooRepository } from '../../infrastructure/dynamodb/foo.repository';
+import { FOO_REPOSITORY } from '../../domain/repositories/IFooRepository';
+
+@Module({
+  controllers: [FooController],
+  providers: [
+    FooService,
+    { provide: FOO_REPOSITORY, useClass: FooRepository },
+  ],
+})
+export class FooModule {}
+```
+
+```typescript
+// src/app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { FooModule } from './modules/foo/foo.module';
+import configuration from './config/configuration';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
+    FooModule,
+  ],
+})
+export class AppModule {}
+```
+
+---
+
+## Application Bootstrap
+
+```typescript
+// src/main.ts
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+
+async function bootstrap(): Promise<void> {
+  const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
+
+  app.useGlobalFilters(new HttpExceptionFilter());
+
+  const port = process.env['PORT'] ?? 3000;
+  await app.listen(port);
+}
+
+bootstrap();
+```
+
+**Rules:**
+- Always enable `ValidationPipe` globally with `whitelist: true` and `transform: true`
+- Always register the global exception filter
+- Use `forbidNonWhitelisted: true` to reject unknown properties in request bodies
+- Read `PORT` from environment; never hardcode
+
+---
+
+## Controllers
+
+Controllers are **thin entry points**. Their only responsibilities:
+1. Declare routes and HTTP methods via decorators
+2. Extract and coerce request data using pipes
+3. Delegate to services
+4. Return typed response DTOs
+
+```typescript
+// src/modules/foo/foo.controller.ts
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { FooService } from './foo.service';
+import { CreateFooDto } from './dto/create-foo.dto';
+import { FooResponseDto } from './dto/foo-response.dto';
+
+@Controller('foos')
+export class FooController {
+  constructor(private readonly fooService: FooService) {}
+
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async create(@Body() dto: CreateFooDto): Promise<FooResponseDto> {
+    return this.fooService.create(dto);
+  }
+
+  @Get(':id')
+  async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<FooResponseDto> {
+    return this.fooService.findById(id);
+  }
 }
 ```
 
-Use classes when the entity has behavior or invariants to enforce:
+**Rules:**
+- No business logic in controllers
+- Use NestJS built-in pipes (`ParseUUIDPipe`, `ParseIntPipe`) for parameter coercion
+- Explicitly declare return types
+- Use `@HttpCode` to set non-default status codes (e.g. 201, 204)
+
+---
+
+## Services (Application Layer)
+
+Services orchestrate domain logic via constructor injection. They are the boundary between presentation and domain.
 
 ```typescript
+// src/modules/foo/foo.service.ts
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { v4 as uuidv4 } from 'uuid';
+import { IFooRepository, FOO_REPOSITORY } from '../../domain/repositories/IFooRepository';
+import { Foo } from '../../domain/models/Foo';
+import { CreateFooDto } from './dto/create-foo.dto';
+import { FooResponseDto } from './dto/foo-response.dto';
+
+@Injectable()
+export class FooService {
+  constructor(
+    @Inject(FOO_REPOSITORY) private readonly fooRepository: IFooRepository,
+  ) {}
+
+  async create(dto: CreateFooDto): Promise<FooResponseDto> {
+    const foo = new Foo({
+      id: uuidv4(),
+      name: dto.name,
+      createdAt: new Date().toISOString(),
+    });
+
+    await this.fooRepository.save(foo);
+
+    return { id: foo.id, name: foo.name, createdAt: foo.createdAt };
+  }
+
+  async findById(id: string): Promise<FooResponseDto> {
+    const foo = await this.fooRepository.findById(id);
+
+    if (!foo) {
+      throw new NotFoundException(`Foo with id ${id} not found`);
+    }
+
+    return { id: foo.id, name: foo.name, createdAt: foo.createdAt };
+  }
+}
+```
+
+**Rules:**
+- Always use constructor injection; use `@Inject(TOKEN)` for interface-bound dependencies
+- Use NestJS built-in HTTP exceptions (`NotFoundException`, `BadRequestException`, `ConflictException`) — never throw raw `Error`
+- Services must not import HTTP decorators, `@Controller`, or AWS SDK directly
+- Return typed response DTOs from service methods — never expose domain entities
+
+---
+
+## Domain Layer
+
+Domain entities are **framework-agnostic** — no NestJS, no AWS SDK, no DynamoDB.
+
+```typescript
+// src/domain/models/Foo.ts
 export class Foo {
   readonly id: string;
   readonly name: string;
@@ -112,7 +300,7 @@ export class Foo {
 
   constructor(props: { id: string; name: string; createdAt: string }) {
     if (!props.name || props.name.trim().length === 0) {
-      throw new ValidationError('name is required');
+      throw new Error('name is required');
     }
     this.id = props.id;
     this.name = props.name.trim();
@@ -121,13 +309,15 @@ export class Foo {
 }
 ```
 
-### Repository Interfaces
+### Repository Interfaces with Injection Tokens
 
-Define repository contracts in the **domain layer**. Infrastructure implements them.
+Always co-locate the `Symbol` injection token with the interface:
 
 ```typescript
 // src/domain/repositories/IFooRepository.ts
 import { Foo } from '../models/Foo';
+
+export const FOO_REPOSITORY = Symbol('IFooRepository');
 
 export interface IFooRepository {
   save(foo: Foo): Promise<void>;
@@ -138,8 +328,6 @@ export interface IFooRepository {
 
 ### Value Objects
 
-Use value objects for concepts with no identity but specific validation rules:
-
 ```typescript
 export class Email {
   readonly value: string;
@@ -147,174 +335,238 @@ export class Email {
   constructor(raw: string) {
     const normalized = raw.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-      throw new ValidationError('Invalid email address');
+      throw new Error('Invalid email address');
     }
     this.value = normalized;
   }
 }
 ```
 
+**Rules:**
+- Domain entities and value objects have zero NestJS or AWS imports
+- Always define an injection token (`Symbol`) alongside repository interfaces
+- Use classes for entities with behavior or invariants; use interfaces for pure data shapes
+
 ---
 
-## Lambda Handlers (Presentation Layer)
+## DTOs and Validation
 
-Handlers are **thin entry points**. Their only responsibilities:
-1. Parse and validate the HTTP event
-2. Call the application service
-3. Return a properly formatted HTTP response
+DTOs use `class-validator` decorators. The global `ValidationPipe` handles transformation and validation automatically.
 
 ```typescript
-// src/presentation/handlers/createFoo.ts
-import { APIGatewayProxyHandler, APIGatewayProxyResult } from 'aws-lambda';
-import { createFoo } from '../../application/services/fooService';
-import { AppError } from '../../infrastructure/errors/AppError';
-import { ValidationError } from '../../infrastructure/errors/ValidationError';
+// src/modules/foo/dto/create-foo.dto.ts
+import { IsString, IsNotEmpty, MaxLength } from 'class-validator';
 
-export const handler: APIGatewayProxyHandler = async (event): Promise<APIGatewayProxyResult> => {
-  try {
-    const body = JSON.parse(event.body ?? '{}');
-    const result = await createFoo(body);
-
-    return {
-      statusCode: 201,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(result),
-    };
-  } catch (error) {
-    if (error instanceof ValidationError) {
-      return {
-        statusCode: 400,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: error.message }),
-      };
-    }
-    if (error instanceof AppError) {
-      return {
-        statusCode: error.statusCode,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: error.message }),
-      };
-    }
-    console.error('Unhandled error:', error);
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Internal server error' }),
-    };
-  }
-};
+export class CreateFooDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+}
 ```
 
-**Rules:**
-- No business logic in handlers
-- Always return `APIGatewayProxyResult` with `statusCode`, `headers`, and `body`
-- Always set `Content-Type: application/json`
-- Log unhandled errors with `console.error` before returning 500
-- Parse `event.body` defensively (`?? '{}'`)
-
----
-
-## Application Layer
-
-Application services orchestrate domain logic. They:
-- Receive plain input objects (not AWS event objects)
-- Validate input using validators
-- Instantiate or retrieve domain entities
-- Call repository interfaces
-- Return plain objects (not domain entities directly)
-
 ```typescript
-// src/application/services/fooService.ts
-import { v4 as uuidv4 } from 'uuid';
-import { IFooRepository } from '../../domain/repositories/IFooRepository';
-import { Foo } from '../../domain/models/Foo';
-import { validateCreateFoo } from '../validators/fooValidator';
-import { FooRepository } from '../../infrastructure/dynamodb/FooRepository';
-
-const repository: IFooRepository = new FooRepository();
-
-export async function createFoo(input: unknown): Promise<{ id: string }> {
-  const validated = validateCreateFoo(input);
-
-  const foo = new Foo({
-    id: uuidv4(),
-    name: validated.name,
-    createdAt: new Date().toISOString(),
-  });
-
-  await repository.save(foo);
-
-  return { id: foo.id };
+// src/modules/foo/dto/foo-response.dto.ts
+export class FooResponseDto {
+  id!: string;
+  name!: string;
+  createdAt!: string;
 }
 ```
 
 **Rules:**
-- Services receive `unknown` input and validate it before use
-- Services must not import `aws-lambda`, `@aws-sdk/*`, or DynamoDB directly
-- Each service function has a single responsibility
-- Return types must be fully typed (no `any`)
+- DTOs must be **classes** (not interfaces) so `class-transformer` can instantiate them
+- Use `class-validator` decorators for all input DTO properties
+- Separate request DTOs (`CreateFooDto`) from response DTOs (`FooResponseDto`)
+- Never return domain entities directly — always map to a response DTO
+
+---
+
+## Exception Handling
+
+### Global Exception Filter
+
+```typescript
+// src/common/filters/http-exception.filter.ts
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
+import type { Request, Response } from 'express';
+
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost): void {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const message =
+      exception instanceof HttpException
+        ? exception.message
+        : 'Internal server error';
+
+    if (status >= 500) {
+      this.logger.error(`${request.method} ${request.url}`, exception);
+    }
+
+    response.status(status).json({ error: message });
+  }
+}
+```
+
+### HTTP Status Code Mapping
+
+| Situation | NestJS Exception | Status |
+|---|---|---|
+| Invalid input | `BadRequestException` | 400 |
+| Unauthorized | `UnauthorizedException` | 401 |
+| Forbidden | `ForbiddenException` | 403 |
+| Not found | `NotFoundException` | 404 |
+| Conflict | `ConflictException` | 409 |
+| Unhandled | (filter catches) | 500 |
+
+**Rules:**
+- Always throw NestJS `HttpException` subclasses from services — never raw `Error`
+- Let the global filter handle all error serialization
+- All error responses follow the shape: `{ "error": "Human-readable message" }`
+
+---
+
+## Configuration
+
+```typescript
+// src/config/configuration.ts
+export default () => ({
+  port: parseInt(process.env['PORT'] ?? '3000', 10),
+  dynamodb: {
+    tableName: process.env['DYNAMODB_TABLE'] ?? '',
+    region: process.env['AWS_REGION'] ?? 'us-east-1',
+    endpoint: process.env['DYNAMODB_ENDPOINT'],
+  },
+});
+```
+
+```typescript
+// Usage in a provider or repository
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class SomeRepository {
+  private readonly tableName: string;
+
+  constructor(private readonly config: ConfigService) {
+    this.tableName = this.config.getOrThrow<string>('dynamodb.tableName');
+  }
+}
+```
+
+**Rules:**
+- Always use `ConfigModule` + `ConfigService` — never access `process.env` directly inside services or repositories
+- Use `getOrThrow` to fail fast on missing required configuration at startup
+- Use bracket notation (`process.env['KEY']`) to satisfy `noPropertyAccessFromIndexSignature`
 
 ---
 
 ## Infrastructure Layer
 
-### DynamoDB Client
+### DynamoDB Client Provider
 
 ```typescript
-// src/infrastructure/dynamodb/dynamodbClient.ts
+// src/infrastructure/dynamodb/dynamodb.provider.ts
+import type { Provider } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
-const client = new DynamoDBClient({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-  ...(process.env.IS_OFFLINE === 'true' && {
-    endpoint: process.env.DYNAMODB_ENDPOINT ?? 'http://localhost:8000',
-    credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
-  }),
-});
+export const DYNAMODB_CLIENT = Symbol('DynamoDBDocumentClient');
 
-export const dynamodb = DynamoDBDocumentClient.from(client);
+export const DynamodbProvider: Provider = {
+  provide: DYNAMODB_CLIENT,
+  inject: [ConfigService],
+  useFactory: (config: ConfigService): DynamoDBDocumentClient => {
+    const endpoint = config.get<string>('dynamodb.endpoint');
+    const client = new DynamoDBClient({
+      region: config.get<string>('dynamodb.region'),
+      ...(endpoint && {
+        endpoint,
+        credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
+      }),
+    });
+    return DynamoDBDocumentClient.from(client);
+  },
+};
 ```
 
 ### Repository Implementation
 
 ```typescript
-// src/infrastructure/dynamodb/FooRepository.ts
-import { PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+// src/infrastructure/dynamodb/foo.repository.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { IFooRepository } from '../../domain/repositories/IFooRepository';
 import { Foo } from '../../domain/models/Foo';
-import { dynamodb } from './dynamodbClient';
+import { DYNAMODB_CLIENT } from './dynamodb.provider';
 
-const TABLE_NAME = process.env.DYNAMODB_TABLE!;
-
+@Injectable()
 export class FooRepository implements IFooRepository {
+  private readonly tableName: string;
+
+  constructor(
+    @Inject(DYNAMODB_CLIENT) private readonly client: DynamoDBDocumentClient,
+    config: ConfigService,
+  ) {
+    this.tableName = config.getOrThrow<string>('dynamodb.tableName');
+  }
+
   async save(foo: Foo): Promise<void> {
-    await dynamodb.send(new PutCommand({
-      TableName: TABLE_NAME,
-      Item: {
-        PK: `FOO#${foo.id}`,
-        SK: `FOO#${foo.id}`,
-        id: foo.id,
-        name: foo.name,
-        createdAt: foo.createdAt,
-        entityType: 'FOO',
-      },
-    }));
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `FOO#${foo.id}`,
+          SK: `FOO#${foo.id}`,
+          id: foo.id,
+          name: foo.name,
+          createdAt: foo.createdAt,
+          entityType: 'FOO',
+        },
+      }),
+    );
   }
 
   async findById(id: string): Promise<Foo | null> {
-    const result = await dynamodb.send(new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { PK: `FOO#${id}`, SK: `FOO#${id}` },
-    }));
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: `FOO#${id}`, SK: `FOO#${id}` },
+      }),
+    );
 
     if (!result.Item) return null;
 
     return new Foo({
-      id: result.Item.id,
-      name: result.Item.name,
-      createdAt: result.Item.createdAt,
+      id: result.Item['id'] as string,
+      name: result.Item['name'] as string,
+      createdAt: result.Item['createdAt'] as string,
     });
+  }
+
+  async findAll(): Promise<Foo[]> {
+    return [];
   }
 }
 ```
@@ -333,97 +585,16 @@ All entities share one table. Use composite keys to separate entity types:
 | Order | `ORDER#<id>` | `ORDER#<id>` |
 | Order by User | `USER#<userId>` | `ORDER#<orderId>` |
 
-Always include `entityType` attribute for filtering.
+Always include an `entityType` attribute for filtering.
 
 ### Key Rules
 
 - Use `PK` and `SK` as partition and sort key attribute names
 - Prefix keys with entity type in uppercase (`USER#`, `ORDER#`)
 - Add a GSI when you need to query by a non-primary attribute
-- Always set `TABLE_NAME` from `process.env.DYNAMODB_TABLE`
-- Never hardcode table names
-
-### AWS SDK v3
-
-Always use AWS SDK v3 (`@aws-sdk/client-dynamodb` + `@aws-sdk/lib-dynamodb`). Use `DynamoDBDocumentClient` to work with plain JavaScript objects instead of DynamoDB's attribute types.
-
----
-
-## Error Handling
-
-### Error Classes
-
-```typescript
-// src/infrastructure/errors/AppError.ts
-export class AppError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode: number = 500
-  ) {
-    super(message);
-    this.name = 'AppError';
-  }
-}
-
-// src/infrastructure/errors/ValidationError.ts
-export class ValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ValidationError';
-  }
-}
-```
-
-### HTTP Status Code Mapping
-
-| Error | Status |
-|---|---|
-| `ValidationError` | 400 |
-| Not found | 404 |
-| `AppError` (custom) | per `statusCode` |
-| Unhandled | 500 |
-
-### Response Format
-
-All error responses follow this shape:
-```json
-{ "error": "Human-readable message" }
-```
-
----
-
-## Validation
-
-Validators live in `src/application/validators/`. They receive `unknown` input and return a typed, validated object — or throw `ValidationError`.
-
-```typescript
-// src/application/validators/fooValidator.ts
-import { ValidationError } from '../../infrastructure/errors/ValidationError';
-
-export interface CreateFooInput {
-  name: string;
-}
-
-export function validateCreateFoo(input: unknown): CreateFooInput {
-  if (typeof input !== 'object' || input === null) {
-    throw new ValidationError('Request body must be a JSON object');
-  }
-
-  const body = input as Record<string, unknown>;
-
-  if (typeof body.name !== 'string' || body.name.trim().length === 0) {
-    throw new ValidationError('name is required and must be a non-empty string');
-  }
-
-  return { name: body.name.trim() };
-}
-```
-
-**Rules:**
-- Validate at the application layer boundary (before domain)
-- Return typed objects from validators, never `any`
-- Throw `ValidationError` with descriptive messages
-- Do not use external validation libraries unless strictly necessary
+- Never hardcode table names — always read from `ConfigService`
+- Always use AWS SDK v3 (`@aws-sdk/client-dynamodb` + `@aws-sdk/lib-dynamodb`)
+- Use `DynamoDBDocumentClient` to work with plain JavaScript objects
 
 ---
 
@@ -436,156 +607,250 @@ Minimum 90% for branches, functions, lines, and statements.
 ### Structure
 
 ```
-__tests__/
+test/
 ├── unit/
-│   ├── domain/
-│   ├── application/
-│   └── infrastructure/
-└── integration/     # Optional: tests against DynamoDB Local
+│   └── modules/
+│       └── foo/
+│           ├── foo.service.spec.ts
+│           └── foo.controller.spec.ts
+└── e2e/
+    └── foo.e2e-spec.ts
 ```
 
-### Unit Test Pattern
+### Service Unit Test Pattern
 
-Follow **AAA (Arrange, Act, Assert)**. Mock all infrastructure dependencies.
+Use `@nestjs/testing` to create isolated testing modules:
 
 ```typescript
-// __tests__/unit/application/fooService.test.ts
-import { createFoo } from '../../../src/application/services/fooService';
-import { IFooRepository } from '../../../src/domain/repositories/IFooRepository';
+// test/unit/modules/foo/foo.service.spec.ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
+import { FooService } from '../../../../src/modules/foo/foo.service';
+import { IFooRepository, FOO_REPOSITORY } from '../../../../src/domain/repositories/IFooRepository';
 
-const mockRepository: jest.Mocked<IFooRepository> = {
+const mockFooRepository: jest.Mocked<IFooRepository> = {
   save: jest.fn(),
   findById: jest.fn(),
   findAll: jest.fn(),
 };
 
-jest.mock('../../../src/infrastructure/dynamodb/FooRepository', () => ({
-  FooRepository: jest.fn().mockImplementation(() => mockRepository),
-}));
+describe('FooService', () => {
+  let service: FooService;
 
-describe('createFoo', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        FooService,
+        { provide: FOO_REPOSITORY, useValue: mockFooRepository },
+      ],
+    }).compile();
 
-  it('saves a new Foo and returns its id', async () => {
-    // Arrange
-    mockRepository.save.mockResolvedValue(undefined);
-
-    // Act
-    const result = await createFoo({ name: 'Test' });
-
-    // Assert
-    expect(result.id).toBeDefined();
-    expect(mockRepository.save).toHaveBeenCalledTimes(1);
+    service = module.get<FooService>(FooService);
+    jest.clearAllMocks();
   });
 
-  it('throws ValidationError when name is missing', async () => {
-    await expect(createFoo({ name: '' })).rejects.toThrow('name is required');
+  describe('create', () => {
+    it('saves a new Foo and returns its id', async () => {
+      // Arrange
+      mockFooRepository.save.mockResolvedValue(undefined);
+
+      // Act
+      const result = await service.create({ name: 'Test' });
+
+      // Assert
+      expect(result.id).toBeDefined();
+      expect(mockFooRepository.save).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('findById', () => {
+    it('throws NotFoundException when Foo does not exist', async () => {
+      mockFooRepository.findById.mockResolvedValue(null);
+
+      await expect(service.findById('nonexistent-id')).rejects.toThrow(NotFoundException);
+    });
   });
 });
 ```
 
-### Handler Test Pattern
-
-Test handlers by constructing mock `APIGatewayProxyEvent` objects:
+### Controller Unit Test Pattern
 
 ```typescript
-import { handler } from '../../../src/presentation/handlers/createFoo';
-import { APIGatewayProxyEvent } from 'aws-lambda';
+// test/unit/modules/foo/foo.controller.spec.ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { FooController } from '../../../../src/modules/foo/foo.controller';
+import { FooService } from '../../../../src/modules/foo/foo.service';
 
-const mockEvent = (body: unknown): Partial<APIGatewayProxyEvent> => ({
-  body: JSON.stringify(body),
-  headers: {},
-  httpMethod: 'POST',
-  path: '/foos',
-});
+const mockFooService = {
+  create: jest.fn(),
+  findById: jest.fn(),
+};
 
-it('returns 201 on valid input', async () => {
-  const result = await handler(mockEvent({ name: 'Test' }) as APIGatewayProxyEvent, {} as any, () => {});
-  expect(result?.statusCode).toBe(201);
+describe('FooController', () => {
+  let controller: FooController;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [FooController],
+      providers: [{ provide: FooService, useValue: mockFooService }],
+    }).compile();
+
+    controller = module.get<FooController>(FooController);
+    jest.clearAllMocks();
+  });
+
+  describe('create', () => {
+    it('delegates to FooService.create and returns the result', async () => {
+      const dto = { name: 'Test' };
+      const expected = { id: 'abc', name: 'Test', createdAt: '2026-01-01T00:00:00.000Z' };
+      mockFooService.create.mockResolvedValue(expected);
+
+      const result = await controller.create(dto);
+
+      expect(result).toEqual(expected);
+      expect(mockFooService.create).toHaveBeenCalledWith(dto);
+    });
+  });
 });
 ```
 
----
+### E2E Test Pattern
 
-## Serverless Framework Configuration
+```typescript
+// test/e2e/foo.e2e-spec.ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from '../../src/app.module';
 
-### serverless.yml Conventions
+describe('FooController (e2e)', () => {
+  let app: INestApplication;
 
-```yaml
-service: service-name
+  beforeAll(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
 
-frameworkVersion: '3'
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    await app.init();
+  });
 
-provider:
-  name: aws
-  runtime: nodejs20.x
-  stage: ${opt:stage, 'dev'}
-  region: ${opt:region, 'us-east-1'}
-  environment:
-    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
-  iam:
-    role:
-      statements:
-        - Effect: Allow
-          Action:
-            - dynamodb:PutItem
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - dynamodb:Query
-            - dynamodb:Scan
-          Resource:
-            - !GetAtt MainTable.Arn
-            - !Sub '${MainTable.Arn}/index/*'
+  afterAll(async () => {
+    await app.close();
+  });
 
-functions:
-  createFoo:
-    handler: src/presentation/handlers/createFoo.handler
-    events:
-      - http:
-          path: /foos
-          method: post
-          cors: true
+  it('POST /foos — returns 201 on valid input', () => {
+    return request(app.getHttpServer())
+      .post('/foos')
+      .send({ name: 'Test' })
+      .expect(201)
+      .expect((res) => {
+        expect((res.body as { id: string }).id).toBeDefined();
+      });
+  });
 
-resources:
-  Resources:
-    MainTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.DYNAMODB_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: PK
-            AttributeType: S
-          - AttributeName: SK
-            AttributeType: S
-        KeySchema:
-          - AttributeName: PK
-            KeyType: HASH
-          - AttributeName: SK
-            KeyType: RANGE
-
-plugins:
-  - serverless-offline
-  - serverless-dynamodb-local
+  it('POST /foos — returns 400 on invalid input', () => {
+    return request(app.getHttpServer()).post('/foos').send({ name: '' }).expect(400);
+  });
+});
 ```
 
 **Rules:**
-- Always use `PAY_PER_REQUEST` billing mode for new tables
-- Grant least-privilege IAM permissions (list only needed actions)
-- Use `${self:service}-${self:provider.stage}` for table name
-- Enable CORS on all HTTP endpoints
+- Use `@nestjs/testing` for all unit and e2e tests — never instantiate classes manually
+- Follow **AAA (Arrange, Act, Assert)** in unit tests
+- Always `jest.clearAllMocks()` in `beforeEach`
+- E2E tests must mirror the global pipes and filters configured in `main.ts`
 
 ---
 
 ## TypeScript Standards
 
 - Use `strict: true` in `tsconfig.json`
-- No `any` — use `unknown` and narrow types
+- Enable `experimentalDecorators: true` and `emitDecoratorMetadata: true` (required by NestJS)
+- No `any` — use `unknown` and narrow types explicitly
 - Prefer `interface` for object shapes, `type` for unions and primitives
 - All function parameters and return types must be explicitly typed
 - Use `as const` for literal types and enums
-- Never use non-null assertion (`!`) unless the value is guaranteed by contract; add a comment explaining why
+- Never use non-null assertion (`!`) unless the value is guaranteed by contract
+- Use bracket notation for `process.env` access: `process.env['KEY']`
+
+---
+
+## Build Configuration
+
+### tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "module": "CommonJS",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "incremental": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test"]
+}
+```
+
+### tsconfig.build.json
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test", "dist", "**/*.spec.ts", "**/*.e2e-spec.ts"]
+}
+```
+
+### nest-cli.json
+
+```json
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "builder": "tsc",
+    "tsConfigPath": "tsconfig.build.json"
+  }
+}
+```
+
+### package.json scripts
+
+```json
+{
+  "scripts": {
+    "build": "nest build",
+    "start": "node dist/main",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "test:e2e": "jest --config jest-e2e.config.ts"
+  }
+}
+```
+
+**Rules:**
+- Always build with `tsc` via `nest build` — never use `ts-node` in production
+- Never commit `dist/` to version control
+- Target `ES2022` to leverage Node.js 24 native features (structured clone, `Array.at`, etc.)
 
 ---
 
@@ -594,7 +859,7 @@ plugins:
 - Branch naming: `feature/<ticket-id>-short-description`, `fix/<ticket-id>-short-description`
 - Commit message format: `<type>(<scope>): <description>` (Conventional Commits)
   - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-  - Example: `feat(contacts): add POST /contacts handler`
+  - Example: `feat(foos): add POST /foos endpoint`
 - One feature per branch, small focused commits
 - Always update `openspec/specs/api-spec.yml` when endpoints change
 - Always update `openspec/specs/data-model.md` when DynamoDB schema changes

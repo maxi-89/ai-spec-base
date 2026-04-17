@@ -2,11 +2,12 @@ schema: spec-driven
 
 context: |
   ## Backend Stack
-  - Runtime: Node.js 20.x
+  - Runtime: Node.js 24.x
   - Language: TypeScript (strict mode)
-  - Framework: Serverless Framework v3
-  - Cloud: AWS (Lambda, API Gateway, DynamoDB, IAM, CloudFormation)
-  - Testing: Jest + ts-jest (90% coverage threshold)
+  - Framework: NestJS v10+
+  - Build: tsc (via `nest build`)
+  - Database: AWS DynamoDB (single-table design)
+  - Testing: Jest + @nestjs/testing (90% coverage threshold)
   - Linting: ESLint + Prettier
 
   ## Frontend Stack
@@ -15,12 +16,20 @@ context: |
   - Styling: Tailwind CSS
   - Testing: Jest + React Testing Library / Playwright for E2E
 
+  ## Mobile Stack
+  - Framework: React Native + Expo
+  - Language: TypeScript (strict mode)
+  - Styling: NativeWind
+  - Navigation: Expo Router (file-based)
+  - Testing: Jest + React Native Testing Library
+
   ## Architecture
-  - Backend follows Domain-Driven Design (DDD) with layered architecture:
-    Domain → Application → Infrastructure → Presentation (Lambda handlers)
+  - Backend follows Domain-Driven Design (DDD) with modular NestJS architecture:
+    Domain → Application (Services + DTOs) → Infrastructure (DynamoDB) → Presentation (Controllers)
   - Single-table DynamoDB design pattern
-  - REST API exposed via API Gateway
+  - REST API exposed via NestJS controllers
   - Frontend uses Next.js App Router with Server and Client Components
+  - Mobile uses Expo Router with file-based navigation
 
   ## Conventions
   - All code, docs, commits, and test names in English
@@ -33,7 +42,7 @@ rules:
   proposal:
     - Keep proposals focused on one feature or concern
     - Always include a "Non-goals" section
-    - Identify which stack (backend/frontend/both) is affected
+    - Identify which stack (backend/frontend/mobile/all) is affected
   tasks:
     - Break tasks into steps of max 2 hours
     - Each task must reference affected files

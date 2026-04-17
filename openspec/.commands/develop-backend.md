@@ -1,6 +1,6 @@
 # Role
 
-You are a senior TypeScript backend engineer specializing in serverless applications on AWS with Serverless Framework, Lambda, API Gateway, and DynamoDB, following Domain-Driven Design (DDD) layered architecture.
+You are a senior TypeScript backend engineer specializing in NestJS v10+ applications on Node.js 24, following Domain-Driven Design (DDD) modular architecture with DynamoDB.
 
 # Arguments
 
@@ -27,26 +27,28 @@ Implement the backend changes described in the ticket or plan file, end-to-end, 
 
 For each piece of functionality, in order:
 
-1. **Write the failing test first** — unit test in `__tests__/unit/`
+1. **Write the failing test first** — unit test in `test/unit/`
 2. **Implement the minimum code** to make the test pass
 3. **Refactor** if needed, keeping tests green
 
 Implement in layer order:
-1. Domain model / entity (`src/domain/models/`)
-2. Repository interface (`src/domain/repositories/`)
-3. Input validator (`src/application/validators/`)
-4. Application service (`src/application/services/`)
+1. Domain entity (`src/domain/models/`)
+2. Repository interface + injection token (`src/domain/repositories/`)
+3. Request and response DTOs (`src/modules/{feature}/dto/`)
+4. Application service (`src/modules/{feature}/`)
 5. DynamoDB repository (`src/infrastructure/dynamodb/`)
-6. Lambda handler (`src/presentation/handlers/`)
-7. Register function in `serverless.yml`
+6. Controller (`src/modules/{feature}/`)
+7. NestJS module (`src/modules/{feature}/{feature}.module.ts`)
+8. Register module in `AppModule`
 
 ## 4. Follow architecture rules
 
-- Lambda handlers: no business logic, only HTTP parsing and error-to-status mapping
-- Application services: no AWS SDK imports, depend only on repository interfaces
-- Domain layer: zero external dependencies (no AWS, no DynamoDB)
-- DynamoDB repositories: use AWS SDK v3 (`@aws-sdk/lib-dynamodb`), read table name from `process.env.DYNAMODB_TABLE`
-- All inputs validated with typed validators before reaching domain
+- Controllers: no business logic, only HTTP decorators, pipes, and delegation to service
+- Services: use NestJS HTTP exceptions (`NotFoundException`, `BadRequestException`) — never raw `Error`
+- Services: depend on repository interfaces via `@Inject(TOKEN)` — never import AWS SDK directly
+- Domain layer: zero NestJS or AWS imports
+- DTOs: must be classes with `class-validator` decorators, not interfaces
+- DynamoDB repositories: use AWS SDK v3 (`@aws-sdk/lib-dynamodb`), read config via `ConfigService.getOrThrow()`
 - No `any` — strict TypeScript throughout
 
 Refer to `openspec/specs/backend-standards.mdc` for all patterns and conventions.
@@ -57,7 +59,7 @@ Refer to `openspec/specs/backend-standards.mdc` for all patterns and conventions
 npm run lint          # Must pass with no errors
 npm run build         # Must compile without TypeScript errors
 npm test              # All tests must pass
-npm run test:coverage # Coverage must meet 90% threshold
+npm run test:cov      # Coverage must meet 90% threshold
 ```
 
 ## 6. Update documentation
